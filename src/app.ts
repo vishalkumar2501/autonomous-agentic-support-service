@@ -9,6 +9,8 @@ import { logger } from './config/logger';
 import { errorHandler } from './middlewares/error.middleware';
 import { ApiError } from './utils/ApiError';
 import { authRouter } from './modules/auth/auth.routes';
+import { ordersRouter } from './modules/orders/orders.routes';
+import { ticketsRouter } from './modules/tickets/tickets.routes';
 
 export const createApp = (): express.Application => {
   const app = express();
@@ -81,6 +83,8 @@ export const createApp = (): express.Application => {
 
   // Mount API Modules
   app.use('/api/v1/auth', authRouter);
+  app.use('/api/v1/orders', ordersRouter);
+  app.use('/api/v1/tickets', ticketsRouter);
 
   // Readiness probe: verifies DB health for ECS/ALB routing
   app.get('/api/v1/ready', async (_req: Request, res: Response) => {
