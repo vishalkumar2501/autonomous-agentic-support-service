@@ -8,6 +8,7 @@ import { env } from './config/env';
 import { logger } from './config/logger';
 import { errorHandler } from './middlewares/error.middleware';
 import { ApiError } from './utils/ApiError';
+import { authRouter } from './modules/auth/auth.routes';
 
 export const createApp = (): express.Application => {
   const app = express();
@@ -77,6 +78,9 @@ export const createApp = (): express.Application => {
 
   app.get('/health', healthHandler);
   app.get('/api/v1/health', healthHandler);
+
+  // Mount API Modules
+  app.use('/api/v1/auth', authRouter);
 
   // Readiness probe: verifies DB health for ECS/ALB routing
   app.get('/api/v1/ready', async (_req: Request, res: Response) => {
