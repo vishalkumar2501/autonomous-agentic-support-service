@@ -78,14 +78,23 @@ export const createApp = (): express.Application => {
   app.get('/health', healthHandler);
   app.get('/api/v1/health', healthHandler);
 
-  // Readiness probe placeholder (will check DB and Redis in later phases)
-  app.get('/api/v1/ready', (_req: Request, res: Response) => {
-    res.status(200).json({
-      status: 'ready',
-      checks: {
-        api: 'ok',
-      },
-    });
+  // Readiness probe: verifies DB health for ECS/ALB routing
+  app.get('/api/v1/ready', async (_req: Request, res: Response) => {
+    try {
+      const { prisma } = await import('./db/prisma');
+      await prisma.$queryRaw`SELECT 1`;
+      res.status(200).json({
+        status: 'ready',
+        checks: {
+          database: 'ok',
+        },
+      });
+    } catch (err) {
+      res.status(503).json({
+        status: 'unready',
+        error: 'Database check failed',
+      });
+    }
   });
 
   // Handle 404 for undefined routes
