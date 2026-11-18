@@ -11,6 +11,7 @@ import { ApiError } from './utils/ApiError';
 import { authRouter } from './modules/auth/auth.routes';
 import { ordersRouter } from './modules/orders/orders.routes';
 import { ticketsRouter } from './modules/tickets/tickets.routes';
+import { agentRouter } from './modules/agent/agent.routes';
 
 export const createApp = (): express.Application => {
   const app = express();
@@ -85,6 +86,7 @@ export const createApp = (): express.Application => {
   app.use('/api/v1/auth', authRouter);
   app.use('/api/v1/orders', ordersRouter);
   app.use('/api/v1/tickets', ticketsRouter);
+  app.use('/api/v1/agent', agentRouter);
 
   // Readiness probe: verifies DB health for ECS/ALB routing
   app.get('/api/v1/ready', async (_req: Request, res: Response) => {
