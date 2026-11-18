@@ -12,6 +12,7 @@ import { authRouter } from './modules/auth/auth.routes';
 import { ordersRouter } from './modules/orders/orders.routes';
 import { ticketsRouter } from './modules/tickets/tickets.routes';
 import { agentRouter } from './modules/agent/agent.routes';
+import { escalationsRouter } from './modules/escalations/escalations.routes';
 
 export const createApp = (): express.Application => {
   const app = express();
@@ -87,6 +88,7 @@ export const createApp = (): express.Application => {
   app.use('/api/v1/orders', ordersRouter);
   app.use('/api/v1/tickets', ticketsRouter);
   app.use('/api/v1/agent', agentRouter);
+  app.use('/api/v1/escalations', escalationsRouter);
 
   // Readiness probe: verifies DB health for ECS/ALB routing
   app.get('/api/v1/ready', async (_req: Request, res: Response) => {
