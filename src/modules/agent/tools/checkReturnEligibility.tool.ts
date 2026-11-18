@@ -30,6 +30,18 @@ export async function executeCheckReturnEligibility(
     };
   }
 
+  // If order is already refunded, it cannot be returned or refunded again
+  if (order.status === OrderStatus.REFUNDED) {
+    return {
+      success: true,
+      data: {
+        eligible: false,
+        daysLeft: 0,
+        reason: 'Order has already been refunded',
+      },
+    };
+  }
+
   // If order is not delivered yet, it cannot be returned
   if (order.status !== OrderStatus.DELIVERED || !order.deliveredAt) {
     return {
@@ -38,18 +50,6 @@ export async function executeCheckReturnEligibility(
         eligible: false,
         daysLeft: 0,
         reason: `Order is not delivered yet (current status: ${order.status})`,
-      },
-    };
-  }
-
-  // If order is already refunded
-  if (order.status === OrderStatus.REFUNDED) {
-    return {
-      success: true,
-      data: {
-        eligible: false,
-        daysLeft: 0,
-        reason: 'Order has already been refunded',
       },
     };
   }
