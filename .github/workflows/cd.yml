@@ -1,0 +1,230 @@
+name: Continuous Deployment (CD)
+
+on:
+  push:
+    branches:
+      - 'main'
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # Required for AWS OIDC authentication
+  contents: read    # Required to checkout the repository
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  validate-and-test:
+    name: Run Pre-Deployment Verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: vishal2501kvs
+          POSTGRES_PASSWORD: test_password_123
+          POSTGRES_DB: autonomous-agentic-support-service
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      NODE_ENV: test
+      PORT: 4000
+      DATABASE_URL: postgresql://vishal2501kvs:test_password_123@localhost:5432/autonomous-agentic-support-service?schema=public
+      DIRECT_URL: postgresql://vishal2501kvs:test_password_123@localhost:5432/autonomous-agentic-support-service?schema=public
+      REDIS_URL: redis://localhost:6379
+      JWT_ACCESS_SECRET: test_jwt_access_secret_key_32_chars_long
+      JWT_REFRESH_SECRET: test_jwt_refresh_secret_key_32_chars_long
+      LLM_PROVIDER: gemini
+      LLM_MODEL: gemini-2.0-flash
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Code Linting
+        run: npm run lint
+
+      - name: TypeScript Compilation Check
+        run: npm run typecheck
+
+      - name: Prisma Client Generation
+        run: npm run prisma:generate
+
+      - name: Run Prisma Database Migrations
+        run: npx prisma migrate deploy
+
+      - name: Seed Verification Data
+        run: npm run seed
+
+      - name: Run Unit, Integration & Scenario Tests
+        run: npm run test:coverage
+
+      - name: Build Production Distribution
+        run: npm run build
+
+  deploy-to-ecs:
+    name: Build, Migrate & Deploy to AWS ECS
+    needs: [validate-and-test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-south-1' }}
+          role-session-name: GitHubActionsECSDeploy
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, Tag and Push Container Image to Amazon ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || 'autonomous-agentic-support-service' }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "IMAGE=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_ENV
+
+      - name: Run Database Migration as One-off ECS Task
+        env:
+          CLUSTER: ${{ vars.ECS_CLUSTER || 'autonomous-agentic-cluster-dev' }}
+          TASK_FAMILY: ${{ vars.ECS_API_SERVICE || 'agentic-api-dev' }}
+          SUBNETS: ${{ vars.PRIVATE_SUBNET_IDS }}
+          SECURITY_GROUPS: ${{ vars.TASK_SECURITY_GROUP_ID }}
+        run: |
+          echo "Running one-off migration task in private subnets..."
+          TASK_ARN=$(aws ecs run-task \
+            --cluster $CLUSTER \
+            --task-definition $TASK_FAMILY \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SECURITY_GROUPS],assignPublicIp=DISABLED}" \
+            --overrides '{"containerOverrides": [{"name": "api", "command": ["sh", "scripts/migrate.sh"]}]}' \
+            --query 'tasks[0].taskArn' \
+            --output text)
+          
+          echo "Migration task triggered: $TASK_ARN"
+          aws ecs wait tasks-stopped --cluster $CLUSTER --tasks $TASK_ARN
+          
+          EXIT_CODE=$(aws ecs describe-tasks \
+            --cluster $CLUSTER \
+            --tasks $TASK_ARN \
+            --query 'tasks[0].containers[0].exitCode' \
+            --output text)
+          
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "CRITICAL: Database migration task exited with non-zero code: $EXIT_CODE"
+            exit 1
+          fi
+          echo "Database migration completed with exit code 0."
+
+      - name: Download Active API Task Definition
+        env:
+          CLUSTER: ${{ vars.ECS_CLUSTER || 'autonomous-agentic-cluster-dev' }}
+          SERVICE: ${{ vars.ECS_API_SERVICE || 'agentic-api-dev' }}
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition $(aws ecs describe-services --cluster $CLUSTER --services $SERVICE --query 'services[0].taskDefinition' --output text) \
+            --query 'taskDefinition' \
+            --output json > task-def-api.json
+
+      - name: Download Active Worker Task Definition
+        env:
+          CLUSTER: ${{ vars.ECS_CLUSTER || 'autonomous-agentic-cluster-dev' }}
+          SERVICE: ${{ vars.ECS_WORKER_SERVICE || 'agentic-worker-dev' }}
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition $(aws ecs describe-services --cluster $CLUSTER --services $SERVICE --query 'services[0].taskDefinition' --output text) \
+            --query 'taskDefinition' \
+            --output json > task-def-worker.json
+
+      - name: Render New Image for API Task Definition
+        id: render-api
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-def-api.json
+          container-name: api
+          image: ${{ env.IMAGE }}
+
+      - name: Render New Image for Worker Task Definition
+        id: render-worker
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-def-worker.json
+          container-name: worker
+          image: ${{ env.IMAGE }}
+
+      - name: Deploy API Service to Amazon ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-api.outputs.task-definition }}
+          service: ${{ vars.ECS_API_SERVICE || 'agentic-api-dev' }}
+          cluster: ${{ vars.ECS_CLUSTER || 'autonomous-agentic-cluster-dev' }}
+          wait-for-service-stability: true
+
+      - name: Deploy Worker Service to Amazon ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-worker.outputs.task-definition }}
+          service: ${{ vars.ECS_WORKER_SERVICE || 'agentic-worker-dev' }}
+          cluster: ${{ vars.ECS_CLUSTER || 'autonomous-agentic-cluster-dev' }}
+          wait-for-service-stability: true
+
+      - name: Post-Deployment Smoke Test (ALB Health Probe)
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          if [ -z "$APP_URL" ]; then
+            echo "Notice: vars.APP_URL is not set. Skipping live ALB smoke test."
+            exit 0
+          fi
+          
+          echo "Pinging $APP_URL/api/v1/health (10 retries with backoff)..."
+          for i in {1..10}; do
+            STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$APP_URL/api/v1/health" || echo "000")
+            if [ "$STATUS_CODE" = "200" ]; then
+              echo "Smoke test passed with status 200 on attempt $i!"
+              exit 0
+            fi
+            echo "Attempt $i failed with status code $STATUS_CODE. Retrying in 5 seconds..."
+            sleep 5
+          done
+          
+          echo "CRITICAL: Smoke test failed after 10 attempts! ECS Deployment Circuit Breaker will trigger automated rollback."
+          exit 1
