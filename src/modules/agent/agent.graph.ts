@@ -22,7 +22,7 @@ import {
   executeEscalateToHuman,
   ToolContext,
 } from './tools';
-import { AgentDecision, AgentRunStatus, AgentStepType, TicketStatus, Prisma } from '@prisma/client';
+import { AgentDecision, AgentRunStatus, AgentStepType, TicketStatus, EscalationStatus, Prisma } from '@prisma/client';
 
 export class AgentGraphBuilder {
   static createGraph() {
@@ -436,6 +436,23 @@ Please investigate this case, call necessary tools, and arrive at a resolution.`
       where: { id: state.ticketId },
       data: { status: newTicketStatus },
     });
+
+    // Ensure an Escalation record exists in the queue for human review
+    if (finalDecision.decision === AgentDecision.ESCALATE) {
+      const existingEscalation = await prisma.escalation.findFirst({
+        where: { runId: state.runId },
+      });
+      if (!existingEscalation) {
+        await prisma.escalation.create({
+          data: {
+            ticketId: state.ticketId,
+            runId: state.runId,
+            reason: state.escalationReason || 'Automated escalation by agent guardrails',
+            status: EscalationStatus.PENDING,
+          },
+        });
+      }
+    }
 
     return {
       decision: finalDecision.decision as AgentDecision,

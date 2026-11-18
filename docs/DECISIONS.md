@@ -14,6 +14,7 @@ This document records architectural, dependency, and design decisions made durin
 - **rimraf**: Cross-platform clean script for `npm run build` (`rimraf dist`).
 - **tsx**: Modern zero-config TypeScript runtime for dev servers and database seeding.
 - **vitest**: Lightning-fast native ESM/CJS test runner compatible with TypeScript and mocking.
+- **@vitest/coverage-v8**: Native V8 code coverage provider to generate coverage metrics and enforce the >=70% test coverage requirement on `src/modules/agent`.
 
 ## ADR 3: State Management & LangGraph Node Structure
 - **Decision**: Implemented LangGraph state machine with strict message-passing state (`AgentState`). Guardrail checks intercept tool execution before any action node runs, logging `AgentStep` with type `GUARDRAIL` and preventing unauthorized actions.
