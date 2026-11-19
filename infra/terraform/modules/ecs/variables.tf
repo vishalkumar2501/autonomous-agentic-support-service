@@ -40,12 +40,12 @@ variable "task_role_arn" {
 
 variable "secret_arns" {
   type = object({
-    database_url      = string
-    jwt_access_secret = string
+    database_url       = string
+    jwt_access_secret  = string
     jwt_refresh_secret = string
-    google_api_key    = string
-    openai_api_key    = string
-    redis_url         = string
+    google_api_key     = string
+    openai_api_key     = string
+    redis_url          = string
   })
   description = "Secrets Manager ARNs map"
 }
@@ -57,41 +57,41 @@ variable "app_port" {
 }
 
 variable "api_cpu" {
-  type        = number
-  default     = 256
+  type    = number
+  default = 256
 }
 
 variable "api_memory" {
-  type        = number
-  default     = 512
+  type    = number
+  default = 512
 }
 
 variable "worker_cpu" {
-  type        = number
-  default     = 256
+  type    = number
+  default = 256
 }
 
 variable "worker_memory" {
-  type        = number
-  default     = 512
+  type    = number
+  default = 512
 }
 
 variable "api_min_capacity" {
-  type        = number
-  default     = 1
+  type    = number
+  default = 1
 }
 
 variable "api_max_capacity" {
-  type        = number
-  default     = 4
+  type    = number
+  default = 4
 }
 
 variable "worker_min_capacity" {
-  type        = number
-  default     = 1
+  type    = number
+  default = 1
 }
 
 variable "worker_max_capacity" {
-  type        = number
-  default     = 3
+  type    = number
+  default = 3
 }

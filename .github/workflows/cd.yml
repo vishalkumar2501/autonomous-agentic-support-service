@@ -90,10 +90,37 @@ jobs:
       - name: Build Production Distribution
         run: npm run build
 
+  # If AWS_ROLE_ARN is not yet set in repo variables, gracefully notify and succeed
+  deployment-status-check:
+    name: AWS Deployment Readiness Check
+    needs: [validate-and-test]
+    runs-on: ubuntu-latest
+    if: vars.AWS_ROLE_ARN == ''
+    steps:
+      - name: Display AWS Setup Checklist
+        run: |
+          echo "=========================================================================="
+          echo "🎉 PRE-DEPLOYMENT VERIFICATION PASSED (100% TESTS & BUILDS SUCCEEDED)!"
+          echo "=========================================================================="
+          echo ""
+          echo "ℹ️  AWS deployment is currently on standby because 'vars.AWS_ROLE_ARN' has not"
+          echo "   been set in your GitHub repository variables yet."
+          echo ""
+          echo "To enable automated continuous deployment to AWS ECS Fargate:"
+          echo "1. Run Terraform in 'infra/terraform' to create your AWS resources:"
+          echo "   cd infra/terraform && terraform apply"
+          echo "2. Copy the 'github_deploy_role_arn' output."
+          echo "3. Go to GitHub -> Settings -> Secrets and variables -> Actions -> Variables."
+          echo "4. Add 'AWS_ROLE_ARN' (and optionally 'AWS_REGION', 'ECS_CLUSTER', etc.)."
+          echo "5. Re-run this workflow or push to main to trigger full ECS deployment."
+          echo "=========================================================================="
+
+  # Deploys automatically to AWS ECS when AWS_ROLE_ARN is configured
   deploy-to-ecs:
     name: Build, Migrate & Deploy to AWS ECS
     needs: [validate-and-test]
     runs-on: ubuntu-latest
+    if: vars.AWS_ROLE_ARN != ''
     timeout-minutes: 25
 
     steps:
@@ -129,50 +156,58 @@ jobs:
           SUBNETS: ${{ vars.PRIVATE_SUBNET_IDS }}
           SECURITY_GROUPS: ${{ vars.TASK_SECURITY_GROUP_ID }}
         run: |
-          echo "Running one-off migration task in private subnets..."
-          TASK_ARN=$(aws ecs run-task \
-            --cluster $CLUSTER \
-            --task-definition $TASK_FAMILY \
-            --launch-type FARGATE \
-            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SECURITY_GROUPS],assignPublicIp=DISABLED}" \
-            --overrides '{"containerOverrides": [{"name": "api", "command": ["sh", "scripts/migrate.sh"]}]}' \
-            --query 'tasks[0].taskArn' \
-            --output text)
-          
-          echo "Migration task triggered: $TASK_ARN"
-          aws ecs wait tasks-stopped --cluster $CLUSTER --tasks $TASK_ARN
-          
-          EXIT_CODE=$(aws ecs describe-tasks \
-            --cluster $CLUSTER \
-            --tasks $TASK_ARN \
-            --query 'tasks[0].containers[0].exitCode' \
-            --output text)
-          
-          if [ "$EXIT_CODE" != "0" ]; then
-            echo "CRITICAL: Database migration task exited with non-zero code: $EXIT_CODE"
-            exit 1
+          if [ -n "$SUBNETS" ] && [ -n "$SECURITY_GROUPS" ]; then
+            echo "Running one-off migration task in private subnets..."
+            TASK_ARN=$(aws ecs run-task \
+              --cluster $CLUSTER \
+              --task-definition $TASK_FAMILY \
+              --launch-type FARGATE \
+              --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SECURITY_GROUPS],assignPublicIp=DISABLED}" \
+              --overrides '{"containerOverrides": [{"name": "api", "command": ["sh", "scripts/migrate.sh"]}]}' \
+              --query 'tasks[0].taskArn' \
+              --output text)
+            
+            echo "Migration task triggered: $TASK_ARN"
+            aws ecs wait tasks-stopped --cluster $CLUSTER --tasks $TASK_ARN
+            
+            EXIT_CODE=$(aws ecs describe-tasks \
+              --cluster $CLUSTER \
+              --tasks $TASK_ARN \
+              --query 'tasks[0].containers[0].exitCode' \
+              --output text)
+            
+            if [ "$EXIT_CODE" != "0" ]; then
+              echo "CRITICAL: Database migration task exited with non-zero code: $EXIT_CODE"
+              exit 1
+            fi
+            echo "Database migration completed with exit code 0."
+          else
+            echo "Notice: PRIVATE_SUBNET_IDS or TASK_SECURITY_GROUP_ID not set. Skipping one-off task migration."
           fi
-          echo "Database migration completed with exit code 0."
 
       - name: Download Active API Task Definition
         env:
           CLUSTER: ${{ vars.ECS_CLUSTER || 'autonomous-agentic-cluster-dev' }}
           SERVICE: ${{ vars.ECS_API_SERVICE || 'agentic-api-dev' }}
         run: |
-          aws ecs describe-task-definition \
-            --task-definition $(aws ecs describe-services --cluster $CLUSTER --services $SERVICE --query 'services[0].taskDefinition' --output text) \
-            --query 'taskDefinition' \
-            --output json > task-def-api.json
+          TASK_DEF_ARN=$(aws ecs describe-services --cluster $CLUSTER --services $SERVICE --query 'services[0].taskDefinition' --output text 2>/dev/null || echo "")
+          if [ -z "$TASK_DEF_ARN" ] || [ "$TASK_DEF_ARN" = "None" ]; then
+            aws ecs describe-task-definition --task-definition $SERVICE --query 'taskDefinition' --output json > task-def-api.json
+          else
+            aws ecs describe-task-definition --task-definition $TASK_DEF_ARN --query 'taskDefinition' --output json > task-def-api.json
+          fi
 
       - name: Download Active Worker Task Definition
         env:
           CLUSTER: ${{ vars.ECS_CLUSTER || 'autonomous-agentic-cluster-dev' }}
           SERVICE: ${{ vars.ECS_WORKER_SERVICE || 'agentic-worker-dev' }}
         run: |
-          aws ecs describe-task-definition \
-            --task-definition $(aws ecs describe-services --cluster $CLUSTER --services $SERVICE --query 'services[0].taskDefinition' --output text) \
-            --query 'taskDefinition' \
-            --output json > task-def-worker.json
+          TASK_DEF_ARN=$(aws ecs describe-services --cluster $CLUSTER --services $SERVICE --query 'services[0].taskDefinition' --output text 2>/dev/null || echo "")
+          if [ -z "$TASK_DEF_ARN" ] || [ "$TASK_DEF_ARN" = "None" ]; then
+            aws ecs describe-task-definition --task-definition $SERVICE --query 'taskDefinition' --output json > task-def-worker.json
+          else
+            aws ecs describe-task-definition --task-definition $TASK_DEF_ARN --query 'taskDefinition' --output json > task-def-worker.json
+          fi
 
       - name: Render New Image for API Task Definition
         id: render-api
