@@ -15,6 +15,7 @@ RUN npm ci
 # ==========================================
 FROM node:20-alpine AS build
 WORKDIR /app
+RUN apk add --no-cache openssl
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json package-lock.json tsconfig.json ./
@@ -25,8 +26,8 @@ COPY src ./src
 RUN npx prisma generate
 RUN npm run build
 
-# Remove development dependencies to keep final image slim
-RUN npm prune --production
+# Remove development dependencies and clean npm cache to save disk space
+RUN npm prune --production && rm -rf ~/.npm
 
 # ==========================================
 # Stage 3: Minimal Production Runtime
@@ -40,15 +41,15 @@ RUN apk add --no-cache tini curl openssl
 ENV NODE_ENV=production
 ENV PORT=4000
 
-# Copy runtime production assets
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/prisma ./prisma
-COPY --from=build /app/package.json ./package.json
-COPY scripts/migrate.sh ./scripts/migrate.sh
-COPY scripts/docker-entrypoint.sh ./scripts/docker-entrypoint.sh
+# Copy runtime production assets with proper ownership directly (no duplicate layer)
+COPY --chown=node:node --from=build /app/node_modules ./node_modules
+COPY --chown=node:node --from=build /app/dist ./dist
+COPY --chown=node:node --from=build /app/prisma ./prisma
+COPY --chown=node:node --from=build /app/package.json ./package.json
+COPY --chown=node:node scripts/migrate.sh ./scripts/migrate.sh
+COPY --chown=node:node scripts/docker-entrypoint.sh ./scripts/docker-entrypoint.sh
 
-RUN chmod +x ./scripts/*.sh && chown -R node:node /app
+RUN chmod +x ./scripts/*.sh
 
 # Run as non-privileged node user for security
 USER node
