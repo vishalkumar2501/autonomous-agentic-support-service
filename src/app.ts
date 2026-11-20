@@ -23,8 +23,12 @@ export const createApp = (): express.Application => {
   // Behind ALB/Reverse proxy, trust proxy for accurate client IPs and rate limiting
   app.set('trust proxy', env.TRUST_PROXY);
 
-  // Security headers
-  app.use(helmet());
+  // Security headers (CSP disabled so Swagger UI interactive docs render correctly)
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+    }),
+  );
 
   // CORS configuration
   const allowedOrigins = env.CORS_ORIGINS.split(',').map((o) => o.trim());
