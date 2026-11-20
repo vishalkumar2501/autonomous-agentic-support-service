@@ -23,7 +23,7 @@
     "seed": "tsx prisma/seed.ts"
   },
   "prisma": {
-    "seed": "tsx prisma/seed.ts"
+    "seed": "npx --yes tsx prisma/seed.ts"
   },
   "keywords": [
     "ai",
