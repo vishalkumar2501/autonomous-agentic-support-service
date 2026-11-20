@@ -4,8 +4,8 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
 
-# Install build essentials for native addons if needed
-RUN apk add --no-cache libc6-compat
+# Install build essentials and openssl for Prisma native binary
+RUN apk add --no-cache libc6-compat openssl
 
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -34,8 +34,8 @@ RUN npm prune --production
 FROM node:20-alpine AS runtime
 WORKDIR /app
 
-# Install tini init process to properly handle signals and reap zombie child processes
-RUN apk add --no-cache tini curl
+# Install tini init process, curl and openssl for Prisma runtime
+RUN apk add --no-cache tini curl openssl
 
 ENV NODE_ENV=production
 ENV PORT=4000
