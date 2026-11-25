@@ -40,6 +40,7 @@ const envSchema = z.object({
   WORKER_CONCURRENCY: z.coerce.number().default(3),
   CORS_ORIGINS: z.string().default('http://localhost:3000'),
   TRUST_PROXY: z.coerce.number().default(1),
+  RUN_WORKER_IN_PROCESS: z.coerce.boolean().default(false),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);
